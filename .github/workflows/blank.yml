@@ -1,31 +1,54 @@
-name: ZalupaOS_Kernel_Building
+# .github/workflows/beta-release.yml
+name: ZalupaOS Beta Kernel Release
 
-on: [push]
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # Щонеділі о півночі
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  build:
+  beta-release:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Build tiny kernel
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup environment
       run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential bc qemu-system-x86
-        wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.1.58.tar.xz
+        sudo apt-get update && sudo apt-get install -y build-essential bc libssl-dev qemu-system-x86
+        
+    - name: Build kernel
+      run: |
+        wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.1.58.tar.xz
         tar -xf linux-6.1.58.tar.xz
         cd linux-6.1.58
-        make tinyconfig
-        echo "CONFIG_SERIAL_8250=y" >> .config
-        echo "CONFIG_SERIAL_8250_CONSOLE=y" >> .config
+        make defconfig
         make -j$(nproc)
         
-    - name: Quick test
-      run: |
-        cd linux-6.1.58
-        echo | timeout 5s qemu-system-x86_64 \
-          -kernel arch/x86/boot/bzImage \
-          -nographic \
-          -m 128M || echo "Test completed"
+    - name: Create beta release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: beta-$(date +%Y.%m.%d-%H%M)
+        release_name: "Beta Build $(date +%Y.%m.%d)"
+        body: |
+          Automated beta build of Linux kernel for QEMU
+          
+          This is an automated build created by GitHub Actions.
+        draft: false
+        prerelease: true
+        
+    - name: Upload release asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: linux-6.1.58/arch/x86/boot/bzImage
+        asset_name: bzImage
+        asset_content_type: application/octet-stream
