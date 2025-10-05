@@ -1,0 +1,210 @@
+# .github/workflows/zalupaos-kernel-release.yml
+name: Build ZalupaOS Kernel Release
+
+on:
+  push:
+    tags: ['v*', 'zalupaos-*']
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Тип релізу'
+        required: true
+        default: 'beta'
+        type: choice
+        options:
+        - stable
+        - beta
+        - alpha
+
+permissions:
+  contents: write
+
+jobs:
+  build-zalupaos-kernel:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout ZalupaOS
+      uses: actions/checkout@v4
+      
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          libncurses-dev \
+          flex \
+          bison \
+          libssl-dev \
+          libelf-dev \
+          bc \
+          cpio \
+          wget \
+          file \
+          pkg-config
+          
+    - name: Determine ZalupaOS version
+      id: version
+      run: |
+        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          VERSION="${GITHUB_REF#refs/tags/}"
+        else
+          COMMIT_SHORT="${GITHUB_SHA:0:8}"
+          VERSION="zalupaos-$(date +%Y.%m.%d)-${{ github.event.inputs.release_type || 'beta' }}+${COMMIT_SHORT}"
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "KERNEL_VERSION=6.1.58" >> $GITHUB_ENV
+        
+    - name: Download Linux kernel
+      run: |
+        wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${{ env.KERNEL_VERSION }}.tar.xz
+        tar -xf linux-${{ env.KERNEL_VERSION }}.tar.xz
+        echo "KERNEL_DIR=linux-${{ env.KERNEL_VERSION }}" >> $GITHUB_ENV
+        
+    - name: Configure ZalupaOS kernel
+      run: |
+        cd $KERNEL_DIR
+        make defconfig
+        
+        # Вимкнути непотрібні функції для мінімального ядра
+        ./scripts/config --disable CONFIG_STACK_VALIDATION
+        ./scripts/config --disable CONFIG_UNWINDER_ORC
+        ./scripts/config --disable CONFIG_DEBUG_INFO
+        ./scripts/config --disable CONFIG_MODULES
+        
+        # Базові налаштування для системи
+        ./scripts/config --enable CONFIG_SERIAL_8250
+        ./scripts/config --enable CONFIG_SERIAL_8250_CONSOLE
+        ./scripts/config --enable CONFIG_DEVTMPFS
+        ./scripts/config --enable CONFIG_DEVTMPFS_MOUNT
+        ./scripts/config --enable CONFIG_BLK_DEV_INITRD
+        ./scripts/config --enable CONFIG_PRINTK
+        ./scripts/config --enable CONFIG_TTY
+        ./scripts/config --enable CONFIG_64BIT
+        
+        # Встановити назву системи
+        ./scripts/config --set-str CONFIG_LOCALVERSION "-zalupaos"
+        ./scripts/config --set-str CONFIG_SYSFS_DEPRECATED "n"
+        
+    - name: Build ZalupaOS kernel
+      run: |
+        cd $KERNEL_DIR
+        make -j$(nproc) bzImage
+        
+        # Перейменувати ядро для ZalupaOS
+        cp arch/x86/boot/bzImage zalupaos-kernel-${{ env.VERSION }}
+        
+    - name: Create ZalupaOS initramfs
+      run: |
+        mkdir -p zalupaos-initramfs
+        cat > zalupaos-initramfs/init.c << 'EOF'
+#include <stdio.h>
+#include <unistd.h>
+
+int main() {
+    printf("\n");
+    printf("╔════════════════════════════════════════╗\n");
+    printf("║            ZalupaOS Kernel             ║\n");
+    printf("║              Version: %-15s ║\n", "${{ env.VERSION }}");
+    printf("║                                        ║\n");
+    printf("║    Built with GitHub Actions           ║\n");
+    printf("║    Kernel: 6.1.58                     ║\n");
+    printf("║                                        ║\n");
+    printf("║    System is running successfully!     ║\n");
+    printf("╚════════════════════════════════════════╝\n");
+    printf("\n");
+    
+    // Проста оболонка
+    printf("zalupaos> ");
+    fflush(stdout);
+    
+    while(1) {
+        sleep(60);
+        printf("\nzalupaos> ");
+        fflush(stdout);
+    }
+    
+    return 0;
+}
+EOF
+        gcc -static -Os -o zalupaos-initramfs/init zalupaos-initramfs/init.c
+        cd zalupaos-initramfs && find . | cpio -o -H newc | gzip > ../zalupaos-initramfs-${{ env.VERSION }}.cpio.gz
+        
+    - name: Create kernel info file
+      run: |
+        cat > zalupaos-kernel-info.txt << EOF
+ZalupaOS Kernel Information
+===========================
+
+Kernel Version: ${{ env.VERSION }}
+Linux Version: ${{ env.KERNEL_VERSION }}
+Build Date: $(date -u "+%Y-%m-%d %H:%M:%S UTC")
+Git Commit: ${{ github.sha }}
+Build System: GitHub Actions
+
+Features:
+- Minimal x86_64 kernel
+- Serial console support
+- Initramfs with basic shell
+- Optimized for embedded use
+
+Usage:
+  qemu-system-x86_64 \\
+    -kernel zalupaos-kernel-${{ env.VERSION }} \\
+    -initrd zalupaos-initramfs-${{ env.VERSION }}.cpio.gz \\
+    -append "console=ttyS0 quiet" \\
+    -nographic \\
+    -m 512M
+
+ZalupaOS - Легка та ефективна операційна система!
+EOF
+        
+    - name: Create ZalupaOS release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ env.VERSION }}
+        name: "ZalupaOS Kernel ${{ env.VERSION }}"
+        body: |
+          # 🐧 ZalupaOS Kernel Release
+          
+          **Версія:** ${{ env.VERSION }}  
+          **Ядро Linux:** ${{ env.KERNEL_VERSION }}  
+          **Дата збірки:** $(date -u "+%Y-%m-%d %H:%M:%S UTC")  
+          
+          ## 📦 Вміст релізу
+          
+          - `zalupaos-kernel-*` - Власне ядро ZalupaOS
+          - `zalupaos-initramfs-*.cpio.gz` - Initramfs для системи
+          - `zalupaos-kernel-info.txt` - Інформація про збірку
+          - `.config` - Конфігурація ядра
+          
+          ## 🚀 Як використовувати
+          
+          ```bash
+          # Завантажте файли з релізу
+          # Запустіть в QEMU (для тестування)
+          qemu-system-x86_64 \\
+            -kernel zalupaos-kernel-${{ env.VERSION }} \\
+            -initrd zalupaos-initramfs-${{ env.VERSION }}.cpio.gz \\
+            -append "console=ttyS0" \\
+            -nographic \\
+            -m 512M
+          ```
+          
+          ## 🔧 Особливості
+          
+          - Мінімальне ядро для ZalupaOS
+          - Підтримка x86_64 архітектури
+          - Вбудована initramfs з базовою оболонкою
+          - Оптимізовано для embedded систем
+          
+          **ZalupaOS** - Українська легка операційна система!
+          
+        prerelease: ${{ github.event.inputs.release_type != 'stable' }}
+        draft: false
+        files: |
+          ${{ env.KERNEL_DIR }}/zalupaos-kernel-${{ env.VERSION }}
+          zalupaos-initramfs-${{ env.VERSION }}.cpio.gz
+          zalupaos-kernel-info.txt
+          ${{ env.KERNEL_DIR }}/.config
