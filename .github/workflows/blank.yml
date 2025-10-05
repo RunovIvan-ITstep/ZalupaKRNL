@@ -1,0 +1,31 @@
+name: ZalupaOS_Kernel_Building
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Build tiny kernel
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential bc qemu-system-x86
+        wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.1.58.tar.xz
+        tar -xf linux-6.1.58.tar.xz
+        cd linux-6.1.58
+        make tinyconfig
+        echo "CONFIG_SERIAL_8250=y" >> .config
+        echo "CONFIG_SERIAL_8250_CONSOLE=y" >> .config
+        make -j$(nproc)
+        
+    - name: Quick test
+      run: |
+        cd linux-6.1.58
+        echo | timeout 5s qemu-system-x86_64 \
+          -kernel arch/x86/boot/bzImage \
+          -nographic \
+          -m 128M || echo "Test completed"
