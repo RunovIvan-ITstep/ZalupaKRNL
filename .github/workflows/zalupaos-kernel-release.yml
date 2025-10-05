@@ -12,9 +12,9 @@ on:
         default: 'beta'
         type: choice
         options:
-        - stable
-        - beta
-        - alpha
+          - stable
+          - beta
+          - alpha
 
 permissions:
   contents: write
@@ -200,7 +200,6 @@ EOF
           - Оптимізовано для embedded систем
           
           **ZalupaOS** - Українська легка операційна система!
-          
         prerelease: ${{ github.event.inputs.release_type != 'stable' }}
         draft: false
         files: |
