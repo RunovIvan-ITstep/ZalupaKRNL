@@ -2,8 +2,6 @@
 name: Build ZalupaOS Kernel
 
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
 
 jobs:
@@ -22,52 +20,35 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential libssl-dev libelf-dev bc wget
           
-    - name: Get version
-      id: version
+    - name: Download and configure kernel
       run: |
-        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-          VERSION="${GITHUB_REF#refs/tags/}"
-        else
-          VERSION="zalupaos-$(date +%Y.%m.%d)"
-        fi
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "VERSION=$VERSION" >> $GITHUB_ENV
-        echo "KERNEL_VERSION=6.1.58" >> $GITHUB_ENV
+        wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.1.58.tar.xz
+        tar -xf linux-6.1.58.tar.xz
+        cd linux-6.1.58
         
-    - name: Download kernel
-      run: |
-        wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${{ env.KERNEL_VERSION }}.tar.xz
-        tar -xf linux-${{ env.KERNEL_VERSION }}.tar.xz
-        echo "KERNEL_DIR=linux-${{ env.KERNEL_VERSION }}" >> $GITHUB_ENV
-        
-    - name: Configure kernel
-      run: |
-        cd $KERNEL_DIR
+        # МІНІМАЛЬНА конфігурація
         make allnoconfig
         
-        ./scripts/config --enable CONFIG_64BIT
-        ./scripts/config --enable CONFIG_SERIAL_8250
-        ./scripts/config --enable CONFIG_SERIAL_8250_CONSOLE
-        ./scripts/config --enable CONFIG_PRINTK
-        ./scripts/config --enable CONFIG_TTY
-        ./scripts/config --enable CONFIG_LOGO
-        ./scripts/config --enable CONFIG_LOGO_LINUX_CLUT224
+        # ТІЛЬКИ ці 4 опції
+        echo "CONFIG_64BIT=y" >> .config
+        echo "CONFIG_SERIAL_8250=y" >> .config
+        echo "CONFIG_SERIAL_8250_CONSOLE=y" >> .config
+        echo "CONFIG_PRINTK=y" >> .config
         
-        ./scripts/config --disable CONFIG_BLOCK
-        ./scripts/config --disable CONFIG_BLK_DEV_INITRD
+        # ВИМКНУТИ ВСЕ інше
+        echo "CONFIG_BLOCK=n" >> .config
+        echo "CONFIG_BLK_DEV_INITRD=n" >> .config
         
     - name: Build kernel
       run: |
-        cd $KERNEL_DIR
+        cd linux-6.1.58
         make -j$(nproc) bzImage
         
-    - name: Create Release
+    - name: Create release
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: ${{ env.VERSION }}
-        name: "ZalupaOS Kernel ${{ env.VERSION }}"
-        body: "ZalupaOS Kernel with Tux logo"
-        draft: false
-        prerelease: false
+        tag_name: zalupaos-$(date +%Y.%m.%d)
+        name: "ZalupaOS Kernel"
+        body: "Minimal kernel without root filesystem"
         files: |
-          ${{ env.KERNEL_DIR }}/arch/x86/boot/bzImage
+          linux-6.1.58/arch/x86/boot/bzImage
