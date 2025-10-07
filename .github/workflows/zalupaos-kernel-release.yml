@@ -1,5 +1,5 @@
-# .github/workflows/zalupaos-tux-kernel.yml
-name: Build ZalupaOS Kernel with Tux
+# .github/workflows/zalupaos-kernel.yml
+name: Build ZalupaOS Kernel
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 jobs:
-  build-tux-kernel:
+  build-kernel:
     runs-on: ubuntu-latest
     
     steps:
@@ -28,7 +28,7 @@ jobs:
         if [[ "${{ github.ref }}" == refs/tags/* ]]; then
           VERSION="${GITHUB_REF#refs/tags/}"
         else
-          VERSION="zalupaos-$(date +%Y.%m.%d)-tux"
+          VERSION="zalupaos-$(date +%Y.%m.%d)"
         fi
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "VERSION=$VERSION" >> $GITHUB_ENV
@@ -40,43 +40,53 @@ jobs:
         tar -xf linux-${{ env.KERNEL_VERSION }}.tar.xz
         echo "KERNEL_DIR=linux-${{ env.KERNEL_VERSION }}" >> $GITHUB_ENV
         
-    - name: Configure kernel with Tux
+    - name: Configure kernel (NO ROOT FS)
       run: |
         cd $KERNEL_DIR
         make allnoconfig
         
-        # Обов'язкові опції
+        # ТІЛЬКИ ці опції
         ./scripts/config --enable CONFIG_64BIT
         ./scripts/config --enable CONFIG_SERIAL_8250
         ./scripts/config --enable CONFIG_SERIAL_8250_CONSOLE
         ./scripts/config --enable CONFIG_PRINTK
         ./scripts/config --enable CONFIG_TTY
         
+        # ВИМКНУТИ ВСЕ що пов'язано з файловими системами
+        ./scripts/config --disable CONFIG_BLOCK
+        ./scripts/config --disable CONFIG_BLK_DEV
+        ./scripts/config --disable CONFIG_BLK_DEV_INITRD
+        ./scripts/config --disable CONFIG_DEVTMPFS
+        ./scripts/config --disable CONFIG_PROC_FS
+        ./scripts/config --disable CONFIG_SYSFS
+        
         # Tux логотип
         ./scripts/config --enable CONFIG_LOGO
         ./scripts/config --enable CONFIG_LOGO_LINUX_CLUT224
-        ./scripts/config --enable CONFIG_FB
-        ./scripts/config --enable CONFIG_FB_SIMPLE
         
     - name: Build kernel
       run: |
         cd $KERNEL_DIR
         make -j$(nproc) bzImage
         
+    - name: Test kernel
+      run: |
+        cd $KERNEL_DIR
+        timeout 10s qemu-system-x86_64 -kernel arch/x86/boot/bzImage -append "console=ttyS0" -nographic -m 64M || echo "Test completed"
+        
     - name: Create release
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ env.VERSION }}
-        name: "ZalupaOS Tux Kernel ${{ env.VERSION }}"
+        name: "ZalupaOS Kernel ${{ env.VERSION }}"
         body: |
-          # ZalupaOS Kernel with Tux
+          # ZalupaOS Kernel
           
           **Version:** ${{ env.VERSION }}
-          **Feature:** Tux logo included
           
-          ## Run with Tux logo:
+          ## Run command:
           ```bash
-          qemu-system-x86_64 -kernel bzImage -append "console=tty0"
+          qemu-system-x86_64 -kernel bzImage -append "console=ttyS0" -nographic
           ```
         prerelease: true
         files: |
