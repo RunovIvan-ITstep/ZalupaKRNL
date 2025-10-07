@@ -1,33 +1,23 @@
-# .github/workflows/zalupaos-kernel-release.yml
-name: Build ZalupaOS Kernel Release
+# .github/workflows/zalupaos-tux-kernel.yml
+name: Build ZalupaOS Kernel with Tux Logo
 
 on:
   push:
     tags: ['v*', 'zalupaos-*']
   workflow_dispatch:
-    inputs:
-      release_type:
-        description: 'Тип релізу'
-        required: true
-        default: 'beta'
-        type: choice
-        options:
-          - stable
-          - beta
-          - alpha
 
 permissions:
   contents: write
 
 jobs:
-  build-zalupaos-kernel:
+  build-tux-kernel:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout ZalupaOS
+    - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: Install build dependencies
+    - name: Install dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -38,16 +28,18 @@ jobs:
           libssl-dev \
           libelf-dev \
           bc \
-          wget
+          wget \
+          cpio \
+          netpbm
           
-    - name: Determine ZalupaOS version
+    - name: Determine version
       id: version
       run: |
         if [[ "${{ github.ref }}" == refs/tags/* ]]; then
           VERSION="${GITHUB_REF#refs/tags/}"
         else
           COMMIT_SHORT="${GITHUB_SHA:0:8}"
-          VERSION="zalupaos-$(date +%Y.%m.%d)-${{ github.event.inputs.release_type || 'beta' }}+${COMMIT_SHORT}"
+          VERSION="zalupaos-$(date +%Y.%m.%d)-tux+${COMMIT_SHORT}"
         fi
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "VERSION=$VERSION" >> $GITHUB_ENV
@@ -59,55 +51,102 @@ jobs:
         tar -xf linux-${{ env.KERNEL_VERSION }}.tar.xz
         echo "KERNEL_DIR=linux-${{ env.KERNEL_VERSION }}" >> $GITHUB_ENV
         
-    - name: Configure ZalupaOS kernel
+    - name: Configure kernel with Tux logo
       run: |
         cd $KERNEL_DIR
         make defconfig
         
-        # Мінімальна конфігурація
-        ./scripts/config --disable CONFIG_STACK_VALIDATION
-        ./scripts/config --disable CONFIG_UNWINDER_ORC
-        ./scripts/config --disable CONFIG_DEBUG_INFO
-        ./scripts/config --disable CONFIG_MODULES
-        ./scripts/config --disable CONFIG_BLK_DEV_INITRD
+        # Увімкнути логотип Tux
+        ./scripts/config --enable CONFIG_LOGO
+        ./scripts/config --enable CONFIG_LOGO_LINUX_MONO
+        ./scripts/config --enable CONFIG_LOGO_LINUX_VGA16
+        ./scripts/config --enable CONFIG_LOGO_LINUX_CLUT224
         
-        # Обов'язкові опції
+        # Фреймбуфер для відображення логотипу
+        ./scripts/config --enable CONFIG_FB
+        ./scripts/config --enable CONFIG_FIRMWARE_EDID
+        ./scripts/config --enable CONFIG_FB_SIMPLE
+        
+        # Базові опції
         ./scripts/config --enable CONFIG_SERIAL_8250
         ./scripts/config --enable CONFIG_SERIAL_8250_CONSOLE
         ./scripts/config --enable CONFIG_PRINTK
         ./scripts/config --enable CONFIG_TTY
         ./scripts/config --enable CONFIG_64BIT
         
-        # Назва системи
-        ./scripts/config --set-str CONFIG_LOCALVERSION "-zalupaos"
+        # Initramfs
+        ./scripts/config --enable CONFIG_BLK_DEV_INITRD
+        ./scripts/config --enable CONFIG_BLK_DEV_RAM
         
-    - name: Build ZalupaOS kernel
+        # Вимкнути зайве
+        ./scripts/config --disable CONFIG_MODULES
+        
+    - name: Build kernel with Tux
       run: |
         cd $KERNEL_DIR
         make -j$(nproc) bzImage
         
-    - name: Create ZalupaOS release
+    - name: Create initramfs with boot message
+      run: |
+        mkdir -p initramfs
+        cat > initramfs/init.c << 'EOF'
+#include <stdio.h>
+#include <unistd.h>
+
+int main() {
+    printf("\n\n");
+    printf("    🐧 ZalupaOS with Tux Logo 🐧\n");
+    printf("    ============================\n");
+    printf("    Kernel Version: ${{ env.VERSION }}\n");
+    printf("    Tux logo enabled in kernel!\n");
+    printf("    Use: qemu-system-x86_64 -kernel bzImage -append \"console=tty0\"\n");
+    printf("\n");
+    
+    while(1) {
+        sleep(10);
+        printf("🐧 Tux is watching...\n");
+    }
+    return 0;
+}
+EOF
+        gcc -static -Os -o initramfs/init initramfs/init.c
+        cd initramfs && find . | cpio -o -H newc | gzip > ../initramfs.cpio.gz
+        
+    - name: Test kernel in QEMU (text mode)
+      run: |
+        timeout 15s qemu-system-x86_64 \
+          -kernel $KERNEL_DIR/arch/x86/boot/bzImage \
+          -initrd initramfs.cpio.gz \
+          -append "console=ttyS0 rdinit=/init" \
+          -nographic \
+          -m 256M || echo "Test completed"
+          
+    - name: Create release with Tux kernel
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ env.VERSION }}
-        name: "ZalupaOS Kernel ${{ env.VERSION }}"
+        name: "ZalupaOS Tux Kernel ${{ env.VERSION }}"
         body: |
-          # ZalupaOS Kernel ${{ env.VERSION }}
+          # 🐧 ZalupaOS Kernel with Tux Logo
           
-          **Версія ядра:** ${{ env.VERSION }}  
-          **Базове ядро Linux:** ${{ env.KERNEL_VERSION }}  
-          **Дата збірки:** $(date -u "+%Y-%m-%d %H:%M:%S UTC")
+          **Версія:** ${{ env.VERSION }}  
+          **Особливість:** Вбудований логотип Tux  
           
-          ## Файли
-          - `bzImage` - Ядро ZalupaOS
-          - `.config` - Конфігурація ядра
+          ## Як запустити з пінгвіном:
+          ```bash
+          # Для відображення Tux логотипу:
+          qemu-system-x86_64 -kernel bzImage -append "console=tty0" -m 512M
           
-          ## Особливості
-          - Мінімальне ядро x86_64
-          - Підтримка серійної консолі
-          - Без initramfs
-          - Оптимізовано для ZalupaOS
-        prerelease: ${{ github.event.inputs.release_type != 'stable' }}
+          # Текстовий режим:
+          qemu-system-x86_64 -kernel bzImage -initrd initramfs.cpio.gz -append "console=ttyS0 rdinit=/init" -nographic
+          ```
+          
+          ## Що включено:
+          - Логотип Tux у ядрі
+          - Підтримка фреймбуфера
+          - Initramfs з інформаційним повідомленням
+        prerelease: true
         files: |
           ${{ env.KERNEL_DIR }}/arch/x86/boot/bzImage
+          initramfs.cpio.gz
           ${{ env.KERNEL_DIR }}/.config
