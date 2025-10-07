@@ -1,58 +1,57 @@
-# .github/workflows/zalupaos-kernel.yml
-name: Build ZalupaOS Kernel
+# .github/workflows/zalupaos-buildroot.yml
+name: Build ZalupaOS with Buildroot
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-kernel:
+  build:
     runs-on: ubuntu-latest
-    
     permissions:
       contents: write
     
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-      
+    - uses: actions/checkout@v4
+    
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential libssl-dev libelf-dev bc wget
-          
-    - name: Download and configure kernel
+        sudo apt-get install -y wget cpio
+        
+    - name: Download Buildroot
       run: |
-        wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.1.58.tar.xz
-        tar -xf linux-6.1.58.tar.xz
-        cd linux-6.1.58
+        wget -q https://buildroot.org/downloads/buildroot-2024.02.1.tar.gz
+        tar -xf buildroot-2024.02.1.tar.gz
+        echo "BUILDROOT_DIR=buildroot-2024.02.1" >> $GITHUB_ENV
         
-        make allnoconfig
-        
-        echo "CONFIG_64BIT=y" >> .config
-        echo "CONFIG_SERIAL_8250=y" >> .config
-        echo "CONFIG_SERIAL_8250_CONSOLE=y" >> .config
-        echo "CONFIG_PRINTK=y" >> .config
-        
-        echo "CONFIG_BLOCK=n" >> .config
-        echo "CONFIG_BLK_DEV_INITRD=n" >> .config
-        
-    - name: Build kernel
+    - name: Configure minimal system
       run: |
-        cd linux-6.1.58
-        make -j$(nproc) bzImage
+        cd $BUILDROOT_DIR
+        make defconfig
+        # Мінімальна конфігурація
+        echo "BR2_x86_64=y" > .config
+        echo "BR2_TOOLCHAIN_BUILDROOT_GLIBC=y" >> .config
+        echo "BR2_SYSTEM_DHCP=\"eth0\"" >> .config
+        echo "BR2_TARGET_GENERIC_GETTY_PORT=\"ttyS0\"" >> .config
         
-    - name: Create version tag
-      id: version
+    - name: Build with Buildroot
       run: |
-        DATE_TAG=$(date +%Y.%m.%d)
-        echo "tag=zalupaos-$DATE_TAG" >> $GITHUB_OUTPUT
-        echo "VERSION=$DATE_TAG" >> $GITHUB_ENV
+        cd $BUILDROOT_DIR
+        make -j$(nproc)
         
     - name: Create release
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: ${{ steps.version.outputs.tag }}
-        name: "ZalupaOS Kernel ${{ env.VERSION }}"
-        body: "Minimal kernel without root filesystem"
+        tag_name: zalupaos-buildroot-v1
+        name: ZalupaOS Buildroot
+        body: |
+          Complete system with kernel and rootfs
+          
+          Files:
+          - **bzImage** - Linux kernel
+          - **rootfs.cpio** - Root filesystem  
+          - **rootfs.tar** - Root filesystem archive
         files: |
-          linux-6.1.58/arch/x86/boot/bzImage
+          $BUILDROOT_DIR/output/images/bzImage
+          $BUILDROOT_DIR/output/images/rootfs.cpio
+          $BUILDROOT_DIR/output/images/rootfs.tar
