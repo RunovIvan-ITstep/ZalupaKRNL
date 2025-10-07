@@ -3,15 +3,15 @@ name: Build ZalupaOS Kernel
 
 on:
   push:
-    tags: ['v*', 'zalupaos-*']
+    tags: ['v*']
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   build-kernel:
     runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
     
     steps:
     - name: Checkout
@@ -40,54 +40,34 @@ jobs:
         tar -xf linux-${{ env.KERNEL_VERSION }}.tar.xz
         echo "KERNEL_DIR=linux-${{ env.KERNEL_VERSION }}" >> $GITHUB_ENV
         
-    - name: Configure kernel (NO ROOT FS)
+    - name: Configure kernel
       run: |
         cd $KERNEL_DIR
         make allnoconfig
         
-        # ТІЛЬКИ ці опції
         ./scripts/config --enable CONFIG_64BIT
         ./scripts/config --enable CONFIG_SERIAL_8250
         ./scripts/config --enable CONFIG_SERIAL_8250_CONSOLE
         ./scripts/config --enable CONFIG_PRINTK
         ./scripts/config --enable CONFIG_TTY
-        
-        # ВИМКНУТИ ВСЕ що пов'язано з файловими системами
-        ./scripts/config --disable CONFIG_BLOCK
-        ./scripts/config --disable CONFIG_BLK_DEV
-        ./scripts/config --disable CONFIG_BLK_DEV_INITRD
-        ./scripts/config --disable CONFIG_DEVTMPFS
-        ./scripts/config --disable CONFIG_PROC_FS
-        ./scripts/config --disable CONFIG_SYSFS
-        
-        # Tux логотип
         ./scripts/config --enable CONFIG_LOGO
         ./scripts/config --enable CONFIG_LOGO_LINUX_CLUT224
+        
+        ./scripts/config --disable CONFIG_BLOCK
+        ./scripts/config --disable CONFIG_BLK_DEV_INITRD
         
     - name: Build kernel
       run: |
         cd $KERNEL_DIR
         make -j$(nproc) bzImage
         
-    - name: Test kernel
-      run: |
-        cd $KERNEL_DIR
-        timeout 10s qemu-system-x86_64 -kernel arch/x86/boot/bzImage -append "console=ttyS0" -nographic -m 64M || echo "Test completed"
-        
-    - name: Create release
+    - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ env.VERSION }}
         name: "ZalupaOS Kernel ${{ env.VERSION }}"
-        body: |
-          # ZalupaOS Kernel
-          
-          **Version:** ${{ env.VERSION }}
-          
-          ## Run command:
-          ```bash
-          qemu-system-x86_64 -kernel bzImage -append "console=ttyS0" -nographic
-          ```
-        prerelease: true
+        body: "ZalupaOS Kernel with Tux logo"
+        draft: false
+        prerelease: false
         files: |
           ${{ env.KERNEL_DIR }}/arch/x86/boot/bzImage
