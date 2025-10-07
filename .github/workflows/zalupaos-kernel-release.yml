@@ -26,16 +26,13 @@ jobs:
         tar -xf linux-6.1.58.tar.xz
         cd linux-6.1.58
         
-        # МІНІМАЛЬНА конфігурація
         make allnoconfig
         
-        # ТІЛЬКИ ці 4 опції
         echo "CONFIG_64BIT=y" >> .config
         echo "CONFIG_SERIAL_8250=y" >> .config
         echo "CONFIG_SERIAL_8250_CONSOLE=y" >> .config
         echo "CONFIG_PRINTK=y" >> .config
         
-        # ВИМКНУТИ ВСЕ інше
         echo "CONFIG_BLOCK=n" >> .config
         echo "CONFIG_BLK_DEV_INITRD=n" >> .config
         
@@ -44,11 +41,18 @@ jobs:
         cd linux-6.1.58
         make -j$(nproc) bzImage
         
+    - name: Create version tag
+      id: version
+      run: |
+        DATE_TAG=$(date +%Y.%m.%d)
+        echo "tag=zalupaos-$DATE_TAG" >> $GITHUB_OUTPUT
+        echo "VERSION=$DATE_TAG" >> $GITHUB_ENV
+        
     - name: Create release
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: zalupaos-$(date +%Y.%m.%d)
-        name: "ZalupaOS Kernel"
+        tag_name: ${{ steps.version.outputs.tag }}
+        name: "ZalupaOS Kernel ${{ env.VERSION }}"
         body: "Minimal kernel without root filesystem"
         files: |
           linux-6.1.58/arch/x86/boot/bzImage
